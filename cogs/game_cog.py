@@ -127,15 +127,14 @@ class GameCog(commands.Cog):
         player_ids = [str(m.id) for m in player_members]
 
         # Create Discord channels
-        bot_member = guild.get_member(self.bot.user.id)
         try:
             category = await create_campaign_category(guild, "Lost Mines of Phandelver")
-            narration_ch = await create_narration_channel(guild, category, player_ids, bot_member)
-            log_ch = await create_log_channel(guild, category, player_ids, bot_member)
+            narration_ch = await create_narration_channel(guild, category, player_ids, None)
+            log_ch = await create_log_channel(guild, category, player_ids, None)
 
             player_channel_ids: dict[str, str] = {}
             for member in player_members:
-                ch = await create_player_channel(guild, category, member, bot_member)
+                ch = await create_player_channel(guild, category, member, None)
                 player_channel_ids[str(member.id)] = str(ch.id)
         except discord.Forbidden:
             await interaction.followup.send(embed=error_embed(

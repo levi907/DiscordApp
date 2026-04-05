@@ -5,6 +5,21 @@ import discord
 from typing import Optional
 
 
+async def _resolve_members(guild: discord.Guild, player_ids: list[str]) -> list[discord.Member]:
+    """Fetch members by ID, using cache where possible."""
+    members = []
+    for pid in player_ids:
+        member = guild.get_member(int(pid))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(pid))
+            except discord.HTTPException:
+                pass
+        if member:
+            members.append(member)
+    return members
+
+
 async def create_campaign_category(
     guild: discord.Guild, campaign_name: str
 ) -> discord.CategoryChannel:
@@ -21,24 +36,22 @@ async def create_narration_channel(
     guild: discord.Guild,
     category: discord.CategoryChannel,
     player_ids: list[str],
-    bot_member: discord.Member,
+    bot_member,
 ) -> discord.TextChannel:
     """
     Create the main narration channel.
     Visible to all players (read-only) + bot.
     """
-    overwrites = {
+    overwrites: dict = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        bot_member: discord.PermissionOverwrite(
+        guild.me: discord.PermissionOverwrite(
             view_channel=True, send_messages=True, manage_messages=True, embed_links=True
         ),
     }
-    for pid in player_ids:
-        member = guild.get_member(int(pid))
-        if member:
-            overwrites[member] = discord.PermissionOverwrite(
-                view_channel=True, send_messages=False, read_message_history=True
-            )
+    for member in await _resolve_members(guild, player_ids):
+        overwrites[member] = discord.PermissionOverwrite(
+            view_channel=True, send_messages=False, read_message_history=True
+        )
 
     return await guild.create_text_channel(
         name="📖narration",
@@ -52,24 +65,22 @@ async def create_log_channel(
     guild: discord.Guild,
     category: discord.CategoryChannel,
     player_ids: list[str],
-    bot_member: discord.Member,
+    bot_member,
 ) -> discord.TextChannel:
     """
     Create the game log channel (quests, summaries, combat logs).
     Visible to all players (read-only) + bot.
     """
-    overwrites = {
+    overwrites: dict = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        bot_member: discord.PermissionOverwrite(
+        guild.me: discord.PermissionOverwrite(
             view_channel=True, send_messages=True, manage_messages=True, embed_links=True
         ),
     }
-    for pid in player_ids:
-        member = guild.get_member(int(pid))
-        if member:
-            overwrites[member] = discord.PermissionOverwrite(
-                view_channel=True, send_messages=False, read_message_history=True
-            )
+    for member in await _resolve_members(guild, player_ids):
+        overwrites[member] = discord.PermissionOverwrite(
+            view_channel=True, send_messages=False, read_message_history=True
+        )
 
     return await guild.create_text_channel(
         name="📋game-log",
@@ -83,15 +94,15 @@ async def create_player_channel(
     guild: discord.Guild,
     category: discord.CategoryChannel,
     player: discord.Member,
-    bot_member: discord.Member,
+    bot_member,
 ) -> discord.TextChannel:
     """
     Create a private channel for one player.
     Only visible to that player and the bot.
     """
-    overwrites = {
+    overwrites: dict = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        bot_member: discord.PermissionOverwrite(
+        guild.me: discord.PermissionOverwrite(
             view_channel=True, send_messages=True, manage_messages=True, embed_links=True
         ),
         player: discord.PermissionOverwrite(
