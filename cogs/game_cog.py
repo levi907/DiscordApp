@@ -136,9 +136,17 @@ class GameCog(commands.Cog):
             for member in player_members:
                 ch = await create_player_channel(guild, category, member, None)
                 player_channel_ids[str(member.id)] = str(ch.id)
-        except discord.Forbidden:
+        except discord.Forbidden as e:
             await interaction.followup.send(embed=error_embed(
-                "I need 'Manage Channels' permission to create campaign channels."
+                f"Missing permissions to create campaign channels.\n\n"
+                f"Discord says: `{e.text}`\n\n"
+                f"Fix: Go to **Server Settings → Roles → [Bot Role] → enable Administrator** (for testing)."
+            ))
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(embed=error_embed(
+                f"Discord API error while creating channels.\n"
+                f"Code: `{e.code}` — `{e.text}`"
             ))
             return
 
