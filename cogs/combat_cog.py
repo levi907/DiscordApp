@@ -76,41 +76,55 @@ class CombatCog(commands.Cog):
 
     async def _run_monster_turns(self, guild: discord.Guild, campaign, combat: CombatState):
         """Automatically process all consecutive monster turns."""
-        while True:
-            current_id = combat.current_combatant_id()
-            if not current_id or current_id not in combat.monsters:
-                break
+        guild_id = str(guild.id)
+        try:
+            while True:
+                current_id = combat.current_combatant_id()
+                if not current_id or current_id not in combat.monsters:
+                    break
 
-            monster = get_monster_from_combat(combat, current_id)
-            if not monster or not monster.is_alive():
-                combat.advance_turn()
-                continue
+                monster = get_monster_from_combat(combat, current_id)
+                if not monster or not monster.is_alive():
+                    combat.advance_turn()
+                    continue
 
-            results = resolve_monster_turn(combat, current_id)
-            for result in results:
-                combat.add_log(result.description)
-                narration = await narrate_combat_action(
-                    action_description=f"{monster.name} attacks",
-                    mechanical_result=result.description,
-                )
-                await self._post_narration(guild, campaign, narration)
+                results = resolve_monster_turn(combat, current_id)
 
-                # Save updated characters back
+                # Save all character HP changes to DB immediately
                 for pid in list(combat.players.keys()):
                     char = get_character_from_combat(combat, pid)
                     if char:
                         save_character_to_combat(combat, char)
-                        await db.save_character(char, str(guild.id))
+                        await db.save_character(char, guild_id)
 
-            combat.advance_turn()
+                # Narrate each result — non-fatal if AI is unavailable
+                for result in results:
+                    combat.add_log(result.description)
+                    try:
+                        narration = await narrate_combat_action(
+                            action_description=f"{monster.name} attacks",
+                            mechanical_result=result.description,
+                        )
+                    except Exception:
+                        narration = result.description  # fall back to raw mechanical text
+                    await self._post_narration(guild, campaign, narration)
 
-            # Check if combat ended
-            over, reason = is_combat_over(combat)
-            if over:
-                await self._end_combat(guild, campaign, combat, reason)
-                return
+                combat.advance_turn()
+                await db.save_combat(guild_id, combat)
 
-        await db.save_combat(str(guild.id), combat)
+                # Check if combat ended after each monster turn
+                over, reason = is_combat_over(combat)
+                if over:
+                    await self._end_combat(guild, campaign, combat, reason)
+                    return
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            # Save whatever state we have so combat isn't lost
+            await db.save_combat(guild_id, combat)
+
+        await db.save_combat(guild_id, combat)
         await self._post_combat_status(guild, campaign, combat)
 
     async def _end_combat(self, guild: discord.Guild, campaign, combat: CombatState, reason: str):

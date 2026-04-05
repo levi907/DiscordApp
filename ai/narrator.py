@@ -257,3 +257,53 @@ async def generate_session_summary(
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text.strip()
+
+
+async def should_trigger_combat(
+    location_name: str,
+    location_description: str,
+    available_encounter: str,
+    encounter_description: str,
+    story_flags: dict,
+    chapter: int,
+) -> tuple[bool, str]:
+    """
+    Ask the AI whether arriving at this location should immediately trigger combat.
+    Returns (should_start, reason_text).
+    """
+    system = (
+        "You are a D&D 5e Dungeon Master deciding whether combat should begin immediately "
+        "when the party arrives at a location. Answer with ONLY a JSON object:\n"
+        '{"start_combat": true/false, "reason": "one sentence explanation"}\n\n'
+        "Start combat if the encounter description strongly implies an ambush, "
+        "enemies on guard, or an immediate threat. Do NOT start combat for locations "
+        "that are neutral, safe, or where enemies would logically not notice the party yet."
+    )
+    prompt = (
+        f"Location: {location_name}\n"
+        f"Description: {location_description}\n"
+        f"Possible encounter: {available_encounter}\n"
+        f"Encounter description: {encounter_description}\n"
+        f"Campaign chapter: {chapter}\n"
+        f"Story flags already set: {list(story_flags.keys())}\n\n"
+        "Should combat trigger immediately when the party arrives?"
+    )
+
+    client = get_client()
+    try:
+        import json
+        message = await client.messages.create(
+            model=AI_MODEL,
+            max_tokens=100,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        import re
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            return bool(data.get("start_combat", False)), data.get("reason", "")
+    except Exception:
+        pass
+    return False, ""

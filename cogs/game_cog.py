@@ -266,28 +266,28 @@ class GameCog(commands.Cog):
             await interaction.followup.send(embed=error_embed("No active campaign."), ephemeral=True)
             return
 
-        # Find location data
         location_key = campaign.current_location.lower().replace(" ", "_")
-        location = LOCATIONS.get(location_key, {
+        loc_data = LOCATIONS.get(location_key, {
             "name": campaign.current_location,
             "description": "The party stands in an unfamiliar place.",
         })
 
-        narration = await narrate_scene(
-            location_name=location.get("name", campaign.current_location),
-            location_description=location.get("description", ""),
-            chapter=campaign.chapter,
-        )
+        try:
+            narration = await narrate_scene(
+                location_name=loc_data.get("name", campaign.current_location),
+                location_description=loc_data.get("description", ""),
+                chapter=campaign.chapter,
+            )
+        except Exception:
+            narration = loc_data.get("description", "The party surveys their surroundings.")
 
-        # Post to narration channel
         if campaign.narration_channel_id:
             ch = interaction.guild.get_channel(int(campaign.narration_channel_id))
             if ch:
-                await ch.send(embed=narration_embed(
-                    narration, location.get("name", campaign.current_location)
-                ))
+                await ch.send(embed=narration_embed(narration, loc_data.get("name", campaign.current_location)))
 
-        await interaction.followup.send(embed=success_embed("Narration posted to the narration channel."), ephemeral=True)
+        await self._maybe_trigger_combat(interaction, campaign, loc_data)
+        await interaction.followup.send(embed=success_embed("Scene posted to narration channel."), ephemeral=True)
 
     # ------------------------------------------------------------------
     # /game travel
@@ -302,34 +302,140 @@ class GameCog(commands.Cog):
             await interaction.followup.send(embed=error_embed("No active campaign."), ephemeral=True)
             return
 
-        # Find location
         location_key = location.lower().replace(" ", "_")
         loc_data = LOCATIONS.get(location_key, {
             "name": location, "description": f"The party travels to {location}.",
         })
 
         campaign.current_location = loc_data.get("name", location)
-        if location not in campaign.discovered_locations:
+        if campaign.current_location not in campaign.discovered_locations:
             campaign.discovered_locations.append(campaign.current_location)
-
         await db.save_campaign(campaign)
 
-        narration = await narrate_scene(
-            location_name=loc_data.get("name", location),
-            location_description=loc_data.get("description", ""),
-            chapter=campaign.chapter,
-        )
+        try:
+            narration = await narrate_scene(
+                location_name=loc_data.get("name", location),
+                location_description=loc_data.get("description", ""),
+                chapter=campaign.chapter,
+            )
+        except Exception:
+            narration = loc_data.get("description", f"The party arrives at {location}.")
 
         if campaign.narration_channel_id:
             ch = interaction.guild.get_channel(int(campaign.narration_channel_id))
             if ch:
-                await ch.send(embed=narration_embed(
-                    narration, f"Arriving at {loc_data.get('name', location)}"
-                ))
+                await ch.send(embed=narration_embed(narration, f"Arriving at {loc_data.get('name', location)}"))
 
+        await self._maybe_trigger_combat(interaction, campaign, loc_data)
         await interaction.followup.send(
             embed=success_embed(f"Party traveled to **{campaign.current_location}**."), ephemeral=True
         )
+
+    async def _maybe_trigger_combat(self, interaction: discord.Interaction, campaign, loc_data: dict):
+        """Check if the AI thinks combat should start immediately at this location."""
+        from ai.narrator import should_trigger_combat
+        from data.campaign.lmop import ENCOUNTERS, get_encounter
+
+        # Only trigger if location has a default encounter that hasn't been completed
+        encounter_key = loc_data.get("default_encounter")
+        if not encounter_key:
+            return
+
+        # Don't re-trigger if already defeated
+        encounter_data = get_encounter(encounter_key)
+        if not encounter_data:
+            return
+        flag = encounter_data.get("story_flag")
+        if flag and campaign.story_flags.get(flag):
+            return
+
+        # Don't trigger if combat already active
+        existing = await db.load_combat(str(interaction.guild_id))
+        if existing and existing.is_active:
+            return
+
+        # Ask the AI
+        try:
+            start, reason = await should_trigger_combat(
+                location_name=loc_data.get("name", ""),
+                location_description=loc_data.get("description", ""),
+                available_encounter=encounter_key,
+                encounter_description=encounter_data.get("description", ""),
+                story_flags=campaign.story_flags,
+                chapter=campaign.chapter,
+            )
+        except Exception:
+            return
+
+        if not start:
+            return
+
+        # Trigger the encounter automatically
+        from data.models import Character
+        from engine.combat_engine import start_encounter
+        from ai.narrator import narrate_encounter_start
+
+        characters = []
+        for pid in campaign.player_ids:
+            char = await db.load_character(pid, str(interaction.guild_id))
+            if char:
+                characters.append(char)
+
+        if not characters:
+            return
+
+        combat, order_str = start_encounter(encounter_key, characters, encounter_data)
+        await db.save_combat(str(interaction.guild_id), combat)
+
+        monster_names = list({
+            __import__('data.models', fromlist=['Monster']).Monster.from_dict(m).name
+            for m in combat.monsters.values()
+        })
+
+        try:
+            enc_narration = await narrate_encounter_start(
+                encounter_name=encounter_data.get("name", encounter_key),
+                encounter_description=encounter_data.get("description", ""),
+                monster_names=monster_names,
+                location=loc_data.get("name", ""),
+            )
+        except Exception:
+            enc_narration = encounter_data.get("description", "Combat begins!")
+
+        if campaign.narration_channel_id:
+            narr_ch = interaction.guild.get_channel(int(campaign.narration_channel_id))
+            if narr_ch:
+                from utils.embeds import combat_embed, narration_embed
+                await narr_ch.send(embed=narration_embed(enc_narration, f"⚔️ {encounter_data.get('name', encounter_key)}"))
+                await narr_ch.send(embed=combat_embed("Initiative Order", order_str, "Combat begins!"))
+
+        await db.append_log(str(interaction.guild_id), "combat",
+            f"Auto-triggered encounter: {encounter_data.get('name', encounter_key)} — {reason}")
+
+        # Notify each player
+        for pid in campaign.player_ids:
+            ch_id = campaign.player_channel_ids.get(pid)
+            if ch_id:
+                ch = interaction.guild.get_channel(int(ch_id))
+                if ch:
+                    from utils.embeds import info_embed
+                    from engine.combat_engine import get_turn_tracking
+                    from engine.action_validator import get_available_actions_text
+                    char = await db.load_character(pid, str(interaction.guild_id))
+                    if char:
+                        turn = get_turn_tracking(combat, pid)
+                        await ch.send(embed=info_embed(
+                            "⚔️ Combat! (Auto-triggered)",
+                            f"*{reason}*\n\n"
+                            + get_available_actions_text(char, turn)
+                            + "\n\nUse `/combat_action`, `/combat_attack`, `/combat_cast`, or `/combat_end_turn`."
+                        ))
+
+        # Run any immediate monster turns
+        from cogs.combat_cog import CombatCog
+        combat_cog = self.bot.get_cog("CombatCog")
+        if combat_cog:
+            await combat_cog._run_monster_turns(interaction.guild, campaign, combat)
 
     # ------------------------------------------------------------------
     # /game npc
