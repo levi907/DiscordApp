@@ -63,6 +63,17 @@ HELP_TEXT = """
 `/log summary` — Show session summary
 `/log loot` — Show loot acquired
 
+**Exploration & Actions**
+`/action_look` — Describe the current scene
+`/action_examine <target>` — Closely inspect something ("the chest", "the door")
+`/action_search` — Search area for hidden things (rolls Perception + Investigation)
+`/action_skill <skill> <description> [dc]` — Make any skill check (stealth, persuasion, etc.)
+`/action_sneak` — Move stealthily (Stealth check, auto-disadvantage with heavy armor)
+`/action_talk <npc> <message>` — Speak to an NPC — AI responds in character
+`/action_loot` — Check loot from recent combat
+`/action_do <description>` — Describe ANY action — AI acts as DM and narrates the outcome
+`/action_conditions [condition]` — Look up a D&D condition (poisoned, prone, etc.)
+
 **Help**
 `/help` — Show this message
 """

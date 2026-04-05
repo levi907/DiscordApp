@@ -21,6 +21,7 @@ COGS = [
     "cogs.game_cog",
     "cogs.character_cog",
     "cogs.combat_cog",
+    "cogs.actions_cog",
 ]
 
 class DnDBot(commands.Bot):
@@ -44,9 +45,12 @@ class DnDBot(commands.Bot):
         # Sync slash commands
         if DEV_GUILD_ID:
             guild = discord.Object(id=int(DEV_GUILD_ID))
+            # Copy to guild for instant sync, then wipe global to prevent duplicates
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
-            log.info(f"Slash commands synced to dev guild {DEV_GUILD_ID}")
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()   # push empty global tree
+            log.info(f"Slash commands synced to dev guild {DEV_GUILD_ID} (global commands cleared)")
         else:
             await self.tree.sync()
             log.info("Slash commands synced globally (may take up to 1 hour)")
