@@ -89,6 +89,21 @@ class GameCog(commands.Cog):
     @app_commands.describe(players="Mention all participating players (e.g. @Alice @Bob @Carol)")
     async def game_start(self, interaction: discord.Interaction, players: str):
         await interaction.response.defer(ephemeral=False)
+        try:
+            await self._game_start_inner(interaction, players)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            try:
+                await interaction.followup.send(embed=error_embed(
+                    f"Unexpected error starting game:\n```{type(e).__name__}: {e}```\n"
+                    f"Check Railway logs for the full traceback."
+                ))
+            except Exception:
+                pass
+            raise  # re-raise so it appears in Railway logs
+
+    async def _game_start_inner(self, interaction: discord.Interaction, players: str):
         guild = interaction.guild
         if not guild:
             await interaction.followup.send(embed=error_embed("Must be used in a server."))
@@ -98,12 +113,12 @@ class GameCog(commands.Cog):
         existing = await db.load_campaign(str(guild.id))
         if existing:
             await interaction.followup.send(
-                embed=error_embed("A campaign is already running! Use `/game end` first."),
+                embed=error_embed("A campaign is already running! Use `/game_end` first."),
                 ephemeral=True,
             )
             return
 
-        # Parse mentioned players
+        # Parse mentioned players — also accept the invoker with no mentions
         player_members: list[discord.Member] = []
         for word in players.split():
             if word.startswith("<@") and word.endswith(">"):
@@ -115,14 +130,10 @@ class GameCog(commands.Cog):
                 except Exception:
                     pass
 
-        # Include the command invoker if not already listed
+        # Always include the command invoker
         if interaction.user not in player_members:
             if isinstance(interaction.user, discord.Member):
                 player_members.append(interaction.user)
-
-        if not player_members:
-            await interaction.followup.send(embed=error_embed("No valid players found. Mention at least one player."))
-            return
 
         player_ids = [str(m.id) for m in player_members]
 
@@ -138,19 +149,18 @@ class GameCog(commands.Cog):
                 player_channel_ids[str(member.id)] = str(ch.id)
         except discord.Forbidden as e:
             await interaction.followup.send(embed=error_embed(
-                f"Missing permissions to create campaign channels.\n\n"
+                f"Missing permissions to create channels.\n"
                 f"Discord says: `{e.text}`\n\n"
-                f"Fix: Go to **Server Settings → Roles → [Bot Role] → enable Administrator** (for testing)."
+                f"Fix: **Server Settings → Roles → [Bot Role] → enable Administrator**"
             ))
             return
         except discord.HTTPException as e:
             await interaction.followup.send(embed=error_embed(
-                f"Discord API error while creating channels.\n"
-                f"Code: `{e.code}` — `{e.text}`"
+                f"Discord API error creating channels: `{e.status}` `{e.text}`"
             ))
             return
 
-        # Create campaign state
+        # Create and save campaign state
         campaign = CampaignState(guild_id=str(guild.id))
         campaign.narration_channel_id = str(narration_ch.id)
         campaign.log_channel_id = str(log_ch.id)
@@ -162,25 +172,29 @@ class GameCog(commands.Cog):
             "Gundren Rockseeker": "Your employer. Stout dwarf merchant. Currently missing.",
             "Sildar Hallwinter": "Gundren's bodyguard. Warrior, Lords' Alliance. Captured by goblins.",
         }
-
         await db.save_campaign(campaign)
 
-        # Narrate the opening scene
+        # AI narration — non-fatal, falls back to static text if API unavailable
         location = LOCATIONS.get("sword_coast_road", {})
-        narration = await narrate_scene(
-            location_name=location.get("name", "Sword Coast"),
-            location_description=location.get("description", ""),
-            chapter=1,
-            recent_events=["The party has been hired by Gundren Rockseeker to escort supplies to Phandalin."],
-        )
+        try:
+            narration = await narrate_scene(
+                location_name=location.get("name", "Sword Coast Road"),
+                location_description=location.get("description", ""),
+                chapter=1,
+                recent_events=["The party has been hired by Gundren Rockseeker to escort supplies to Phandalin."],
+            )
+        except Exception:
+            narration = (
+                "The road east winds through dark pine forest. Birdsong fades behind you as Neverwinter "
+                "disappears over the horizon. Somewhere ahead, Phandalin waits — and with it, Gundren's secrets."
+            )
 
-        # Post opening narration to narration channel
         narration_message = (
             f"**The adventure begins...**\n\n"
             f"*Players: {', '.join(m.display_name for m in player_members)}*\n\n"
             f"{narration}\n\n"
-            f"*Gundren hired you to escort a wagon of supplies to Phandalin and paid 10 gold pieces each, "
-            f"with 10 more on arrival at Barthen's Provisions. He and his bodyguard Sildar rode ahead.*"
+            f"*Gundren hired you to escort a wagon of supplies to Phandalin — 10 gp each, "
+            f"10 more on delivery to Barthen's Provisions. He and his bodyguard Sildar rode ahead.*"
         )
         await narration_ch.send(embed=narration_embed(narration_message, "Chapter 1: Goblin Arrows", "Sword Coast Road"))
 
@@ -188,7 +202,7 @@ class GameCog(commands.Cog):
         for q in STARTING_QUESTS:
             await log_ch.send(embed=quest_embed(q))
 
-        # Send welcome to each player's private channel
+        # Welcome message in each player's private channel
         for member in player_members:
             ch_id = player_channel_ids.get(str(member.id))
             if ch_id:
@@ -196,12 +210,12 @@ class GameCog(commands.Cog):
                 if ch:
                     await ch.send(embed=info_embed(
                         f"Welcome, {member.display_name}!",
-                        f"This is your **private channel** for the *Lost Mines of Phandelver* campaign.\n\n"
-                        f"Start by creating your character:\n"
-                        f"```\n/character create name:<name> race:<race> char_class:<class>\n```\n"
-                        f"Available classes: Fighter, Wizard, Rogue, Cleric, Ranger, Paladin, Barbarian, Bard\n"
-                        f"Available races: Human, Elf, Dwarf, Halfling, Half-Elf, Half-Orc, Gnome, Dragonborn, Tiefling\n\n"
-                        f"Use `/help` to see all commands."
+                        f"This is your **private channel** for *Lost Mines of Phandelver*.\n\n"
+                        f"**Create your character first:**\n"
+                        f"```\n/character_create name:Thorin race:Dwarf char_class:Fighter\n```\n"
+                        f"**Available classes:** Fighter, Wizard, Rogue, Cleric, Ranger, Paladin, Barbarian, Bard\n"
+                        f"**Available races:** Human, Elf, Dwarf, Halfling, Half-Elf, Half-Orc, Gnome, Dragonborn, Tiefling\n\n"
+                        f"Type `/help` to see all commands."
                     ))
 
         # Confirm in the invoking channel
