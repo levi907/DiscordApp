@@ -33,49 +33,84 @@ def combat_embed(title: str, description: str, footer: str = "") -> discord.Embe
 
 
 def character_sheet_embed(char: Character) -> discord.Embed:
-    """Full character sheet embed."""
-    embed = discord.Embed(
-        title=f"📜 {char.name}",
-        description=f"*{char.race} {char.char_class} — Level {char.level}*\n{char.background} | {char.alignment}",
-        color=COLOR_INFO,
+    """Full character sheet styled after a physical D&D stat block."""
+    ab   = char.ability_scores
+    prof = char.proficiency_bonus
+
+    # Embed colour tracks HP
+    pct = char.current_hp / char.max_hp if char.max_hp > 0 else 0
+    color = (
+        0x2ECC71   if pct >  0.5 else   # healthy green
+        COLOR_WARNING if pct > 0.25 else  # wounded orange
+        COLOR_ERROR   if pct >  0    else  # critical red
+        0x34495E                           # dead slate
     )
 
-    # Ability scores
-    ab = char.ability_scores
-    def fmt(score, mod): return f"{score} ({'+' if mod >= 0 else ''}{mod})"
-    embed.add_field(name="STR", value=fmt(ab.strength, ab.str_mod), inline=True)
-    embed.add_field(name="DEX", value=fmt(ab.dexterity, ab.dex_mod), inline=True)
-    embed.add_field(name="CON", value=fmt(ab.constitution, ab.con_mod), inline=True)
-    embed.add_field(name="INT", value=fmt(ab.intelligence, ab.int_mod), inline=True)
-    embed.add_field(name="WIS", value=fmt(ab.wisdom, ab.wis_mod), inline=True)
-    embed.add_field(name="CHA", value=fmt(ab.charisma, ab.cha_mod), inline=True)
+    status_icon = "💀" if char.current_hp == 0 else "⚔️"
+    embed = discord.Embed(color=color)
+    embed.title = f"{status_icon}  {char.name}"
+    embed.description = f"*{char.race}  ·  {char.char_class}  ·  Level {char.level}*"
 
-    # HP / AC
-    hp_bar = _hp_bar(char.current_hp, char.max_hp)
-    embed.add_field(
-        name="Hit Points",
-        value=f"{hp_bar}\n{char.current_hp}/{char.max_hp} HP" + (f" (+{char.temp_hp} temp)" if char.temp_hp else ""),
-        inline=True,
-    )
-    embed.add_field(name="Armor Class", value=str(char.armor_class), inline=True)
-    embed.add_field(name="Speed", value=f"{char.speed} ft", inline=True)
-    embed.add_field(name="Prof. Bonus", value=f"+{char.proficiency_bonus}", inline=True)
-    embed.add_field(name="Hit Dice", value=char.hit_dice, inline=True)
-    embed.add_field(name="XP", value=str(char.experience_points), inline=True)
+    # ── Row 1: Initiative | HP (centre) | Speed ─────────────────────────
+    init     = ab.dex_mod
+    init_str = f"+{init}" if init >= 0 else str(init)
+    hp_bar   = _hp_bar(char.current_hp, char.max_hp, length=12)
+    hp_temp  = f"  (+{char.temp_hp} tmp)" if char.temp_hp else ""
 
-    # Conditions
+    embed.add_field(name="Initiative",    value=f"**{init_str}**",                              inline=True)
+    embed.add_field(name="❤️  HP",        value=f"**{char.current_hp}** / {char.max_hp}{hp_temp}\n{hp_bar}", inline=True)
+    embed.add_field(name="Speed",         value=f"**{char.speed} ft**",                         inline=True)
+
+    # ── Row 2: Hit Dice | Armor Class | Proficiency ──────────────────────
+    embed.add_field(name="Hit Dice",      value=f"**{char.hit_dice}**",         inline=True)
+    embed.add_field(name="Armor Class",   value=f"**{char.armor_class}**",      inline=True)
+    embed.add_field(name="Proficiency",   value=f"**+{prof}**",                 inline=True)
+
+    # ── Ability Score table (2-column, Score / Mod / Save per stat) ──────
+    profs_lower = {s.lower() for s in char.saving_throw_proficiencies}
+
+    def _m(v: int) -> str:
+        return f"+{v}" if v >= 0 else str(v)
+
+    def _s(key: str, mod: int) -> str:
+        bonus = prof if key in profs_lower else 0
+        t = mod + bonus
+        return f"+{t}" if t >= 0 else str(t)
+
+    pairs = [
+        ("STR", ab.strength,     ab.str_mod, "strength",
+         "INT", ab.intelligence, ab.int_mod, "intelligence"),
+        ("DEX", ab.dexterity,    ab.dex_mod, "dexterity",
+         "WIS", ab.wisdom,       ab.wis_mod, "wisdom"),
+        ("CON", ab.constitution, ab.con_mod, "constitution",
+         "CHA", ab.charisma,     ab.cha_mod, "charisma"),
+    ]
+
+    col_hdr  = "     Sc   Mod  Save"         # 19 chars — aligns with data rows
+    divider  = "─" * 19 + "─┼─" + "─" * 19
+    tbl_rows = [col_hdr + "  │  " + col_hdr, divider]
+
+    for n1, s1, m1, k1, n2, s2, m2, k2 in pairs:
+        left  = f"{n1}  {s1:2}  {_m(m1):>3}  {_s(k1,m1):>4}"
+        right = f"{n2}  {s2:2}  {_m(m2):>3}  {_s(k2,m2):>4}"
+        tbl_rows.append(f"{left}  │  {right}")
+
+    table = "```\n" + "\n".join(tbl_rows) + "\n```"
+    embed.add_field(name="📊  Ability Scores", value=table, inline=False)
+
+    # ── Conditions / Death Saves ─────────────────────────────────────────
     if char.conditions:
         embed.add_field(name="⚠️ Conditions", value=", ".join(char.conditions), inline=False)
 
-    # Death saves
     if char.current_hp == 0:
         ds = char.death_saves
         embed.add_field(
             name="💀 Death Saves",
-            value=f"✅ {ds['successes']}/3  ❌ {ds['failures']}/3",
+            value=f"✅ {ds['successes']} / 3   ❌ {ds['failures']} / 3",
             inline=False,
         )
 
+    embed.set_footer(text=f"XP: {char.experience_points}  ·  Gold: {char.gold} gp  ·  {', '.join(char.languages or ['Common'])}")
     return embed
 
 
