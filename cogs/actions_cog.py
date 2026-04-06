@@ -31,6 +31,62 @@ class ActionsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    async def _check_combat_trigger(
+        self,
+        guild: discord.Guild,
+        campaign,
+        trigger_text: str,
+    ):
+        """
+        Ask the AI whether a player action or NPC response should start combat.
+        Silently does nothing if no encounter is available or already in combat.
+        """
+        if not campaign:
+            return
+
+        guild_id = str(guild.id)
+        existing = await db.load_combat(guild_id)
+        if existing and existing.is_active:
+            return
+
+        from data.campaign.lmop import LOCATIONS, get_encounter
+        location_key = campaign.current_location.lower().replace(" ", "_")
+        loc_data = LOCATIONS.get(location_key, {})
+        enc_key = loc_data.get("default_encounter")
+        if not enc_key:
+            return
+
+        enc_data = get_encounter(enc_key)
+        if not enc_data:
+            return
+
+        # Skip if this encounter was already completed
+        flag = enc_data.get("story_flag")
+        if flag and campaign.story_flags.get(flag):
+            return
+
+        available = {enc_key: enc_data.get("description", "")}
+
+        from ai.narrator import evaluate_combat_trigger
+        try:
+            start, chosen_key, reason = await evaluate_combat_trigger(
+                trigger_description=trigger_text,
+                location_name=campaign.current_location,
+                available_encounters=available,
+                story_flags=campaign.story_flags,
+                chapter=campaign.chapter,
+            )
+        except Exception:
+            return
+
+        if not start or not chosen_key:
+            return
+
+        game_cog = self.bot.get_cog("GameCog")
+        if game_cog:
+            chosen_data = get_encounter(chosen_key) or enc_data
+            await game_cog._trigger_encounter(guild, campaign, chosen_key, chosen_data, reason)
+
     async def _post_narration(self, guild, campaign, text: str, title: str = ""):
         if campaign and campaign.narration_channel_id:
             ch = guild.get_channel(int(campaign.narration_channel_id))
@@ -302,6 +358,12 @@ class ActionsCog(commands.Cog):
             embed=success_embed("NPC response posted to narration channel.")
         )
 
+        # Check if the NPC's response indicates hostility that should trigger combat
+        await self._check_combat_trigger(
+            interaction.guild, campaign,
+            f"Player said to {npc_data['name']}: {message}\n\nNPC response: {response}"
+        )
+
     # ------------------------------------------------------------------
     # /action sneak — attempt to move stealthily
     # ------------------------------------------------------------------
@@ -445,6 +507,12 @@ class ActionsCog(commands.Cog):
             f"⚡ {char_name}: {description[:50]}{'...' if len(description) > 50 else ''}",
             f"{ability_context}\n\nNarration posted to the narration channel."
         ))
+
+        # Check whether this action should trigger combat
+        await self._check_combat_trigger(
+            interaction.guild, campaign,
+            f"Player action: {description}\n\nScene narration: {narration}"
+        )
 
     # ------------------------------------------------------------------
     # /action conditions — list all D&D conditions and their effects

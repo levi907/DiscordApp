@@ -275,9 +275,10 @@ async def should_trigger_combat(
         "You are a D&D 5e Dungeon Master deciding whether combat should begin immediately "
         "when the party arrives at a location. Answer with ONLY a JSON object:\n"
         '{"start_combat": true/false, "reason": "one sentence explanation"}\n\n'
-        "Start combat if the encounter description strongly implies an ambush, "
-        "enemies on guard, or an immediate threat. Do NOT start combat for locations "
-        "that are neutral, safe, or where enemies would logically not notice the party yet."
+        "Start combat if the encounter description implies an ambush, enemies actively "
+        "guarding, or any immediate physical threat. Be proactive — if the location is "
+        "hostile territory or the enemy would logically notice and attack, start combat. "
+        "Do NOT start combat only for locations that are clearly neutral or friendly."
     )
     prompt = (
         f"Location: {location_name}\n"
@@ -307,3 +308,76 @@ async def should_trigger_combat(
     except Exception:
         pass
     return False, ""
+
+
+async def evaluate_combat_trigger(
+    trigger_description: str,
+    location_name: str,
+    available_encounters: dict[str, str],
+    story_flags: dict,
+    chapter: int,
+) -> tuple[bool, str | None, str]:
+    """
+    Evaluate whether a player action, NPC response, or scene event should trigger combat.
+    Checks for violence, hostility, ambushes, threats, blood, and escalating confrontations.
+
+    Returns (should_start, encounter_key_or_None, reason).
+    available_encounters: {encounter_key: description}
+    """
+    if not available_encounters:
+        return False, None, ""
+
+    enc_list = "\n".join(f"- {k}: {v}" for k, v in available_encounters.items())
+    system = (
+        "You are a D&D 5e Dungeon Master deciding whether to immediately start combat "
+        "based on a player action or NPC response.\n\n"
+        "START COMBAT if you detect ANY of the following:\n"
+        "- Player attempts, threatens, or implies violence or an attack\n"
+        "- Player draws a weapon in a hostile or tense situation\n"
+        "- An NPC becomes very angry, feels threatened, or is betrayed by the players\n"
+        "- An NPC or creature attacks or lunges at the party\n"
+        "- The scene describes blood, physical confrontation, or weapons clashing\n"
+        "- A failed social roll with a hostile NPC tips into violence\n"
+        "- The party provokes guards, bandits, monsters, or hostile creatures\n"
+        "- An ambush is sprung or the party is caught trespassing by hostile enemies\n"
+        "- Any hint that a fight is about to break out right now\n\n"
+        "Do NOT start combat for:\n"
+        "- Peaceful exploration or conversation\n"
+        "- Tense but non-violent situations\n"
+        "- Friendly or neutral NPCs\n\n"
+        "You MUST output ONLY valid JSON:\n"
+        '{"start_combat": true/false, "encounter_key": "<key from list or null>", '
+        '"reason": "one sentence"}\n\n'
+        "Choose encounter_key from the provided list, or null if no encounter fits."
+    )
+    prompt = (
+        f"Location: {location_name} (Chapter {chapter})\n"
+        f"Story flags already completed: {list(story_flags.keys())}\n"
+        f"Available encounters:\n{enc_list}\n\n"
+        f"Event to evaluate:\n{trigger_description}\n\n"
+        "Should this trigger combat? If yes, which encounter?"
+    )
+
+    client = get_client()
+    try:
+        import json, re
+        message = await client.messages.create(
+            model=AI_MODEL,
+            max_tokens=120,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            start   = bool(data.get("start_combat", False))
+            enc_key = data.get("encounter_key") or None
+            reason  = data.get("reason", "")
+            # Validate the key is actually in our available list
+            if enc_key and enc_key not in available_encounters:
+                enc_key = next(iter(available_encounters))  # fall back to first
+            return start, enc_key, reason
+    except Exception:
+        pass
+    return False, None, ""
