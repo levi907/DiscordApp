@@ -36,7 +36,8 @@ class DnDBot(commands.Bot):
         log.info("Database initialized.")
 
         # Register persistent views so buttons work after bot restarts
-        from utils.views import CombatView, ExplorationView
+        from utils.views import CombatView, ExplorationView, CharacterCreationView
+        self.add_view(CharacterCreationView())
         self.add_view(CombatView())
         self.add_view(ExplorationView())
         log.info("Persistent views registered.")

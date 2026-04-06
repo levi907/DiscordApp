@@ -213,22 +213,25 @@ class GameCog(commands.Cog):
         for q in STARTING_QUESTS:
             await log_ch.send(embed=quest_embed(q))
 
-        # Welcome message in each player's private channel
-        from utils.views import ExplorationView
+        # Welcome message in each player's private channel — prompts character creation
+        from utils.views import CharacterCreationView
         for member in player_members:
             ch_id = player_channel_ids.get(str(member.id))
             if ch_id:
                 ch = guild.get_channel(int(ch_id))
                 if ch:
                     await ch.send(embed=info_embed(
-                        f"Welcome, {member.display_name}!",
-                        f"This is your **private channel** for *Lost Mines of Phandelver*.\n\n"
-                        f"**Create your character first:**\n"
-                        f"```\n/character_create name:Thorin race:Dwarf char_class:Fighter\n```\n"
-                        f"**Available classes:** Fighter, Wizard, Rogue, Cleric, Ranger, Paladin, Barbarian, Bard\n"
-                        f"**Available races:** Human, Elf, Dwarf, Halfling, Half-Elf, Half-Orc, Gnome, Dragonborn, Tiefling\n\n"
-                        f"Use the buttons below or type `/help` to see all commands."
-                    ), view=ExplorationView())
+                        f"Welcome to Lost Mines of Phandelver, {member.display_name}!",
+                        "Before your journey begins — **who are you?**\n\n"
+                        "Press the button below to create your character. "
+                        "Choose your name, race, and class, and your ability scores "
+                        "will be rolled and assigned automatically.\n\n"
+                        "**Races:** Human, Elf, Dwarf, Halfling, Half-Elf, "
+                        "Half-Orc, Gnome, Dragonborn, Tiefling\n"
+                        "**Classes:** Fighter, Wizard, Rogue, Cleric, Ranger, "
+                        "Paladin, Barbarian, Bard\n\n"
+                        "*Once your character is created, your adventure buttons will appear here.*"
+                    ), view=CharacterCreationView())
 
         # Confirm in the invoking channel
         await interaction.followup.send(embed=success_embed(

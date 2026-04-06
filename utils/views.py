@@ -12,6 +12,71 @@ from typing import TYPE_CHECKING
 
 
 # ---------------------------------------------------------------------------
+# Character Creation
+# ---------------------------------------------------------------------------
+
+class CharacterCreationModal(ui.Modal, title="Create Your Character"):
+    char_name = ui.TextInput(
+        label="Character name",
+        placeholder="e.g. Thorin, Lyra, Kael",
+        min_length=1, max_length=32,
+    )
+    race = ui.TextInput(
+        label="Race",
+        placeholder="Human / Elf / Dwarf / Halfling / Half-Elf / Half-Orc / Gnome / Dragonborn / Tiefling",
+        min_length=2, max_length=20,
+    )
+    char_class = ui.TextInput(
+        label="Class",
+        placeholder="Fighter / Wizard / Rogue / Cleric / Ranger / Paladin / Barbarian / Bard",
+        min_length=3, max_length=20,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("CharacterCog")
+        if not cog:
+            await interaction.followup.send("Character system unavailable.", ephemeral=True)
+            return
+        await cog._do_character_creation(
+            interaction,
+            name=self.char_name.value.strip(),
+            race=self.race.value.strip(),
+            char_class=self.char_class.value.strip(),
+        )
+
+
+class CharacterCreationView(ui.View):
+    """
+    Posted in the player's private channel at game start.
+    Shows a single 'Create Character' button that opens the creation modal.
+    Persistent so it survives bot restarts.
+    """
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(
+        label="✨ Begin Character Creation",
+        style=discord.ButtonStyle.success,
+        custom_id="dnd_create_character",
+        row=0,
+    )
+    async def create_character(self, interaction: discord.Interaction, button: ui.Button):
+        # Only show the modal if they don't already have a character
+        import data.database as db
+        char = await db.load_character(str(interaction.user.id), str(interaction.guild_id))
+        if char:
+            await interaction.response.send_message(
+                f"You already have a character — **{char.name}** the {char.race} {char.char_class}!\n"
+                "Use the exploration buttons in your channel or `/character_sheet` to view your sheet.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(CharacterCreationModal())
+
+
+# ---------------------------------------------------------------------------
 # Modals
 # ---------------------------------------------------------------------------
 

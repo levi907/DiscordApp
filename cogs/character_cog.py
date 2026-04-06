@@ -88,6 +88,16 @@ class CharacterCog(commands.Cog):
         char_class: str,
     ):
         await interaction.response.defer(ephemeral=True)
+        await self._do_character_creation(interaction, name, race, char_class)
+
+    async def _do_character_creation(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        race: str,
+        char_class: str,
+    ):
+        """Core creation logic. Caller must have already deferred the interaction."""
         guild_id = str(interaction.guild_id)
         discord_id = str(interaction.user.id)
 
@@ -106,13 +116,13 @@ class CharacterCog(commands.Cog):
 
         if race not in VALID_RACES:
             await interaction.followup.send(embed=error_embed(
-                f"Invalid race. Choose from: {', '.join(VALID_RACES)}"
+                f"**{race}** isn't a valid race.\n\nChoose from: {', '.join(VALID_RACES)}"
             ))
             return
 
         if char_class not in VALID_CLASSES:
             await interaction.followup.send(embed=error_embed(
-                f"Invalid class. Choose from: {', '.join(VALID_CLASSES)}"
+                f"**{char_class}** isn't a valid class.\n\nChoose from: {', '.join(VALID_CLASSES)}"
             ))
             return
 
@@ -120,8 +130,7 @@ class CharacterCog(commands.Cog):
         existing = await db.load_character(discord_id, guild_id)
         if existing:
             await interaction.followup.send(embed=error_embed(
-                f"You already have a character ({existing.name}). "
-                "Contact the DM to reset your character."
+                f"You already have a character — **{existing.name}** the {existing.race} {existing.char_class}."
             ))
             return
 
@@ -133,8 +142,7 @@ class CharacterCog(commands.Cog):
         archetype = get_class_archetype(char_class) or {}
         racial_bonuses = RACIAL_BONUSES.get(race, {})
 
-        # Assign scores to abilities (standard priority: STR, DEX, CON, INT, WIS, CHA)
-        # Adjust for class
+        # Assign scores by class priority
         class_priority: dict[str, list[str]] = {
             "Fighter":   ["strength", "constitution", "dexterity", "wisdom", "intelligence", "charisma"],
             "Wizard":    ["intelligence", "constitution", "dexterity", "wisdom", "strength", "charisma"],
@@ -171,7 +179,6 @@ class CharacterCog(commands.Cog):
 
         # Armor class (from archetype)
         base_ac = archetype.get("armor_class_base", 10 + ability_scores.dex_mod)
-        # Unarmored barbarian: 10 + DEX + CON
         if char_class == "Barbarian":
             base_ac = 10 + ability_scores.dex_mod + ability_scores.con_mod
 
@@ -204,7 +211,7 @@ class CharacterCog(commands.Cog):
         char.spell_ability = archetype.get("spell_ability", "")
         char.cantrips = list(archetype.get("cantrips", []))
         char.prepared_spells = list(archetype.get("spells", []))
-        char.gold = 15  # Starting gold
+        char.gold = 15
         char.languages = ["Common"]
         if race == "Elf":
             char.languages.append("Elvish")
@@ -212,12 +219,11 @@ class CharacterCog(commands.Cog):
             char.languages.append("Dwarvish")
         elif race == "Halfling":
             char.languages.append("Halfling")
-        elif race in ["Gnome"]:
+        elif race == "Gnome":
             char.languages.append("Gnomish")
 
         # Starting equipment
         char.inventory = starting_equipment(char_class)
-        # Equip first weapon and armor
         for item in char.inventory:
             if item.item_type == "weapon" and not any(i.equipped and i.item_type == "weapon" for i in char.inventory):
                 item.equipped = True
@@ -226,22 +232,61 @@ class CharacterCog(commands.Cog):
 
         await db.save_character(char, guild_id)
 
-        # Post character sheet in player's private channel
+        # Build the rolls summary line
+        rolls_text = " | ".join(str(s) for s in scores)
+        scores_detail = (
+            f"STR {ability_scores.strength}  DEX {ability_scores.dexterity}  "
+            f"CON {ability_scores.constitution}  INT {ability_scores.intelligence}  "
+            f"WIS {ability_scores.wisdom}  CHA {ability_scores.charisma}"
+        )
+
+        # Post full character sheet to player's private channel with exploration buttons
         player_ch = self._player_channel(campaign, discord_id, interaction.guild)
         if player_ch:
+            from utils.views import ExplorationView
+            from utils.embeds import narration_embed
+
+            # Optional AI character intro — non-fatal
+            try:
+                from ai.narrator import narrate_scene
+                intro = await narrate_scene(
+                    location_name="Sword Coast Road",
+                    location_description=(
+                        f"{name} the {race} {char_class} sets off from Neverwinter, "
+                        "hired by Gundren Rockseeker to escort supplies to Phandalin."
+                    ),
+                    chapter=1,
+                    recent_events=[f"{name} joins the party as a {race} {char_class}."],
+                )
+            except Exception:
+                intro = (
+                    f"*{name} steps onto the Sword Coast Road, gear in hand and purpose in heart. "
+                    f"The road to Phandalin is long — and full of danger.*"
+                )
+
+            await player_ch.send(embed=narration_embed(intro, f"⚔️ {name} the {race} {char_class}"))
             await player_ch.send(
-                content=f"✅ **{char.name}** created! Here's your character sheet:",
-                embed=character_sheet_embed(char),
+                embed=success_embed(
+                    f"**Rolls:** {rolls_text}\n**Stats:** {scores_detail}\n"
+                    f"**HP:** {max_hp}  **AC:** {base_ac}  **Speed:** {speed} ft"
+                ),
             )
+            await player_ch.send(embed=character_sheet_embed(char))
             if char.spell_slots.slots or char.cantrips:
                 await player_ch.send(embed=spells_embed(char))
             await player_ch.send(embed=inventory_embed(char))
+            await player_ch.send(
+                embed=info_embed(
+                    "🗺️ Your Adventure Begins",
+                    "Use the buttons below to explore the world, talk to NPCs, "
+                    "check your character, and take actions. Good luck!",
+                ),
+                view=ExplorationView(),
+            )
 
-        rolls_text = " | ".join(str(s) for s in scores)
         await interaction.followup.send(embed=success_embed(
-            f"**{name}** the {race} {char_class} created!\n"
-            f"Rolled scores: {rolls_text}\n"
-            f"Check your private channel for your full character sheet."
+            f"**{name}** the {race} {char_class} is ready to adventure!\n"
+            f"Check your private channel for your full character sheet and starting equipment."
         ))
 
     # ------------------------------------------------------------------
