@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import data.database as db
+from config import AI_MODEL
 from data.models import Character
 from data.campaign.lmop import LOCATIONS, get_npc, NPCS, get_location_encounter_hint
 from engine.dice import roll_d20, roll_dice
@@ -154,7 +155,7 @@ class ActionsCog(commands.Cog):
         try:
             client = get_client()
             msg = await client.messages.create(
-                model="claude-sonnet-4-6",
+                model=AI_MODEL,
                 max_tokens=200,
                 system=NARRATOR_SYSTEM,
                 messages=[{"role": "user", "content":
@@ -235,7 +236,7 @@ class ActionsCog(commands.Cog):
             from ai.narrator import get_client, NARRATOR_SYSTEM
             client = get_client()
             msg = await client.messages.create(
-                model="claude-sonnet-4-6",
+                model=AI_MODEL,
                 max_tokens=150,
                 system=NARRATOR_SYSTEM,
                 messages=[{"role": "user", "content":
@@ -290,7 +291,7 @@ class ActionsCog(commands.Cog):
             from ai.narrator import get_client, NARRATOR_SYSTEM
             client = get_client()
             msg = await client.messages.create(
-                model="claude-sonnet-4-6",
+                model=AI_MODEL,
                 max_tokens=200,
                 system=NARRATOR_SYSTEM,
                 messages=[{"role": "user", "content":
@@ -484,7 +485,7 @@ class ActionsCog(commands.Cog):
             from ai.narrator import get_client, NARRATOR_SYSTEM
             client = get_client()
             msg = await client.messages.create(
-                model="claude-sonnet-4-6",
+                model=AI_MODEL,
                 max_tokens=250,
                 system=NARRATOR_SYSTEM,
                 messages=[{"role": "user", "content":

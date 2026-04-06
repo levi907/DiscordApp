@@ -164,7 +164,7 @@ class CombatCog(commands.Cog):
         combat.is_active = False
         await db.save_combat(guild_id, combat)
 
-        encounter_data = ENCOUNTERS.get(combat.encounter_name.lower().replace(" — ", "_").replace(" ", "_"), {})
+        encounter_data = ENCOUNTERS.get(combat.encounter_key, {})
         fallen = [
             Monster.from_dict(m).name
             for m in combat.monsters.values()

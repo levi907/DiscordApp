@@ -143,8 +143,10 @@ def resolve_melee_attack(
     if hit:
         damage_total, damage_rolls = roll_dice(damage_notation)
         if crit:
-            # Double the dice on a crit
-            bonus_total, bonus_rolls = roll_dice(damage_notation)
+            # PHB: double the dice only, not the modifier
+            import re as _re
+            dice_only = _re.sub(r'[+-]\d+$', '', damage_notation).strip()
+            bonus_total, bonus_rolls = roll_dice(dice_only)
             damage_total += bonus_total
             damage_rolls += bonus_rolls
 
@@ -184,10 +186,13 @@ def resolve_saving_throw(
     result = ActionResult()
     target_name = target.name
 
-    # Get target's ability modifier
+    # Get target's ability modifier + proficiency if proficient in this save
     ab = getattr(target.ability_scores, f"{ability[:3]}_mod", 0)
     save_roll = roll_d20()
-    total_save = save_roll + ab
+    prof_bonus = 0
+    if isinstance(target, Character) and ability in target.saving_throw_proficiencies:
+        prof_bonus = target.proficiency_bonus
+    total_save = save_roll + ab + prof_bonus
 
     damage_total, _ = roll_dice(damage_notation)
 
@@ -357,22 +362,26 @@ def make_death_save(character: Character) -> ActionResult:
                 f"**{character.name}** rolls {roll} — Success ({successes}/3 successes)."
             )
     else:
-        character.death_saves["failures"] += 1
+        if roll == 1:
+            # Natural 1 = 2 death save failures (PHB p. 197)
+            character.death_saves["failures"] += 2
+        else:
+            character.death_saves["failures"] += 1
         failures = character.death_saves["failures"]
         if failures >= 3:
-            result.description = (
-                f"**{character.name}** rolls {roll} — **FAILURE** ({failures}/3) — **DEAD!**"
-            )
+            if roll == 1:
+                result.description = (
+                    f"**{character.name}** rolls a natural 1! Two failures — **DEAD!**"
+                )
+            else:
+                result.description = (
+                    f"**{character.name}** rolls {roll} — **FAILURE** ({failures}/3) — **DEAD!**"
+                )
             result.events.append("dead")
         elif roll == 1:
-            # Critical failure = 2 failures
-            character.death_saves["failures"] += 1
-            failures = character.death_saves["failures"]
             result.description = (
                 f"**{character.name}** rolls a natural 1! Two failures! ({failures}/3 failures)."
             )
-            if failures >= 3:
-                result.events.append("dead")
         else:
             result.description = (
                 f"**{character.name}** rolls {roll} — Failure ({failures}/3 failures)."
@@ -481,6 +490,7 @@ def start_encounter(
 
     combat = roll_initiative(characters, monsters)
     combat.encounter_name = encounter_data.get("name", "Encounter")
+    combat.encounter_key = encounter_key
     combat.location = encounter_data.get("location", "")
 
     # Build initiative order string

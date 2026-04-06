@@ -165,7 +165,7 @@ class Character:
     def is_dead(self) -> bool:
         return self.death_saves["failures"] >= 3
 
-    def take_damage(self, amount: int) -> str:
+    def take_damage(self, amount: int, damage_type: str = "") -> str:
         """Apply damage, return description of what happened."""
         # Apply temp HP first
         if self.temp_hp > 0:
@@ -395,6 +395,7 @@ class CombatState:
     active_index: int = 0       # index into initiative_order
     is_active: bool = False
     encounter_name: str = ""
+    encounter_key: str = ""     # LMOP encounter key (e.g. "goblin_ambush")
     location: str = ""
 
     # initiative_order: list of combatant IDs in order
@@ -437,6 +438,7 @@ class CombatState:
             "active_index": self.active_index,
             "is_active": self.is_active,
             "encounter_name": self.encounter_name,
+            "encounter_key": self.encounter_key,
             "location": self.location,
             "initiative_order": self.initiative_order,
             "initiative_rolls": self.initiative_rolls,
@@ -453,6 +455,7 @@ class CombatState:
         c.active_index = d.get("active_index", 0)
         c.is_active = d.get("is_active", False)
         c.encounter_name = d.get("encounter_name", "")
+        c.encounter_key = d.get("encounter_key", "")
         c.location = d.get("location", "")
         c.initiative_order = d.get("initiative_order", [])
         c.initiative_rolls = d.get("initiative_rolls", {})
