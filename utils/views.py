@@ -12,25 +12,76 @@ from typing import TYPE_CHECKING
 
 
 # ---------------------------------------------------------------------------
-# Character Creation
+# Character Creation — step-through button flow
 # ---------------------------------------------------------------------------
 
-class CharacterCreationModal(ui.Modal, title="Create Your Character"):
+# Race info: name → (emoji, stat bonuses blurb, flavor)
+_RACE_INFO: dict[str, tuple[str, str, str]] = {
+    "Human":      ("👤", "+1 to all stats",                  "Adaptable and ambitious."),
+    "Elf":        ("🧝", "+2 DEX · +1 INT",                  "Keen senses, darkvision, Fey Ancestry."),
+    "Dwarf":      ("⛏️",  "+2 CON · +1 WIS",                  "Hardy and tenacious, darkvision."),
+    "Halfling":   ("🦶", "+2 DEX · +1 CHA",                  "Lucky, brave, and stealthy."),
+    "Half-Elf":   ("🌙", "+2 CHA · skill versatility",       "Darkvision, Fey Ancestry, two bonus skills."),
+    "Half-Orc":   ("💪", "+2 STR · +1 CON",                  "Savage Attacks, Relentless Endurance."),
+    "Gnome":      ("🔮", "+2 INT · +1 DEX",                  "Gnome Cunning, darkvision, tinkering."),
+    "Dragonborn": ("🐲", "+2 STR · +1 CHA",                  "Breath weapon, damage resistance."),
+    "Tiefling":   ("😈", "+2 CHA · +1 INT",                  "Darkvision, Hellish Rebuke, Thaumaturgy."),
+}
+
+# Class info: name → (emoji, one-line role description)
+_CLASS_INFO: dict[str, tuple[str, str]] = {
+    "Fighter":   ("⚔️",  "Martial warrior — heavy armor, high HP, versatile."),
+    "Wizard":    ("📚", "Arcane blaster — powerful spells, low HP."),
+    "Rogue":     ("🗡️",  "Stealthy striker — Sneak Attack, skill expert."),
+    "Cleric":    ("✝️",  "Divine caster — healer and front-liner."),
+    "Ranger":    ("🏹", "Wilderness hunter — ranged attacks and spells."),
+    "Paladin":   ("🛡️",  "Holy warrior — Divine Smite, auras, healing."),
+    "Barbarian": ("🪓", "Raging berserker — highest HP, unarmored defense."),
+    "Bard":      ("🎵", "Magical musician — Inspiration, spells, jack-of-all-trades."),
+    "Warlock":   ("🌑", "Eldritch patron — powerful invocations, short-rest slots."),
+    "Sorcerer":  ("⚡", "Innate magic — Metamagic flexibility."),
+    "Druid":     ("🌿", "Nature caster — Wild Shape, area control."),
+    "Monk":      ("👊", "Martial artist — fast, unarmored, ki-powered."),
+}
+
+
+def _race_embed() -> discord.Embed:
+    lines = [
+        f"{emoji} **{race}** — {bonuses} · *{flavor}*"
+        for race, (emoji, bonuses, flavor) in _RACE_INFO.items()
+    ]
+    return discord.Embed(
+        title="🎭 Step 1 of 3 — Choose Your Race",
+        description="\n".join(lines),
+        color=0x5865F2,
+    ).set_footer(text="Click a race below ↓")
+
+
+def _class_embed(race: str) -> discord.Embed:
+    r_emoji, r_bonuses, _ = _RACE_INFO.get(race, ("👤", "", ""))
+    lines = [
+        f"{emoji} **{cls}** — {desc}"
+        for cls, (emoji, desc) in _CLASS_INFO.items()
+    ]
+    return discord.Embed(
+        title="⚔️ Step 2 of 3 — Choose Your Class",
+        description=f"**Race:** {r_emoji} {race} ({r_bonuses})\n\n" + "\n".join(lines),
+        color=0xED4245,
+    ).set_footer(text="Click a class below ↓  You'll name your character next")
+
+
+class _NameModal(ui.Modal):
     char_name = ui.TextInput(
         label="Character name",
         placeholder="e.g. Thorin, Lyra, Kael",
-        min_length=1, max_length=32,
+        min_length=1,
+        max_length=32,
     )
-    race = ui.TextInput(
-        label="Race",
-        placeholder="Human / Elf / Dwarf / Halfling / Half-Elf / Half-Orc / Gnome / Dragonborn / Tiefling",
-        min_length=2, max_length=20,
-    )
-    char_class = ui.TextInput(
-        label="Class",
-        placeholder="Fighter / Wizard / Rogue / Cleric / Ranger / Paladin / Barbarian / Bard",
-        min_length=3, max_length=20,
-    )
+
+    def __init__(self, race: str, char_class: str):
+        super().__init__(title=f"Step 3 — Name your {race} {char_class}")
+        self.race = race
+        self.char_class = char_class
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -41,16 +92,59 @@ class CharacterCreationModal(ui.Modal, title="Create Your Character"):
         await cog._do_character_creation(
             interaction,
             name=self.char_name.value.strip(),
-            race=self.race.value.strip(),
-            char_class=self.char_class.value.strip(),
+            race=self.race,
+            char_class=self.char_class,
         )
+
+
+class _ClassSelectionView(ui.View):
+    """Ephemeral view — shown after a race is chosen."""
+
+    def __init__(self, race: str):
+        super().__init__(timeout=300)
+        self.race = race
+        for i, (cls, (emoji, _)) in enumerate(_CLASS_INFO.items()):
+            btn = ui.Button(
+                label=f"{emoji} {cls}",
+                style=discord.ButtonStyle.secondary,
+                row=i // 4,   # 4 per row → 3 rows for 12 classes
+            )
+            btn.callback = self._make_cb(cls)
+            self.add_item(btn)
+
+    def _make_cb(self, cls: str):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.send_modal(_NameModal(self.race, cls))
+        return callback
+
+
+class _RaceSelectionView(ui.View):
+    """Ephemeral view — shown when character creation starts."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        for i, (race, (emoji, _, __)) in enumerate(_RACE_INFO.items()):
+            btn = ui.Button(
+                label=f"{emoji} {race}",
+                style=discord.ButtonStyle.primary,
+                row=i // 5,   # 5 per row → 2 rows for 9 races
+            )
+            btn.callback = self._make_cb(race)
+            self.add_item(btn)
+
+    def _make_cb(self, race: str):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                embed=_class_embed(race),
+                view=_ClassSelectionView(race),
+            )
+        return callback
 
 
 class CharacterCreationView(ui.View):
     """
-    Posted in the player's private channel at game start.
-    Shows a single 'Create Character' button that opens the creation modal.
-    Persistent so it survives bot restarts.
+    Persistent view posted in the player's private channel at game start.
+    Single button that kicks off the race → class → name flow.
     """
 
     def __init__(self):
@@ -63,7 +157,6 @@ class CharacterCreationView(ui.View):
         row=0,
     )
     async def create_character(self, interaction: discord.Interaction, button: ui.Button):
-        # Only show the modal if they don't already have a character
         import data.database as db
         char = await db.load_character(str(interaction.user.id), str(interaction.guild_id))
         if char:
@@ -73,7 +166,11 @@ class CharacterCreationView(ui.View):
                 ephemeral=True,
             )
             return
-        await interaction.response.send_modal(CharacterCreationModal())
+        await interaction.response.send_message(
+            embed=_race_embed(),
+            view=_RaceSelectionView(),
+            ephemeral=True,
+        )
 
 
 # ---------------------------------------------------------------------------
