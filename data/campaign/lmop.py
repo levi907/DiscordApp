@@ -62,6 +62,7 @@ LOCATIONS: dict[str, dict] = {
             "Pine and oak crowd the verges. Birdsong is the only sound — until it stops."
         ),
         "chapter": 1,
+        "default_encounter": "goblin_ambush",
     },
     "triboar_trail": {
         "name": "Triboar Trail",
@@ -70,6 +71,7 @@ LOCATIONS: dict[str, dict] = {
             "The air smells of pine resin and horse dung."
         ),
         "chapter": 1,
+        "default_encounter": "goblin_ambush",
     },
     "goblin_ambush_site": {
         "name": "Goblin Ambush Site",

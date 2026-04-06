@@ -32,6 +32,33 @@ class ActionsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    # Combat keywords that always trigger without asking the AI
+    _COMBAT_KEYWORDS = {
+        "attack", "attacks", "attacked", "attacking",
+        "strike", "strikes", "struck", "striking",
+        "stab", "stabs", "stabbed", "stabbing",
+        "slash", "slashes", "slashed", "slashing",
+        "shoot", "shoots", "shot", "shooting",
+        "charge", "charges", "charged", "charging",
+        "swing", "swings", "swung", "swinging",
+        "lunge", "lunges", "lunged", "lunging",
+        "cast", "casts", "casting",  # spell targeting an enemy
+        "fight", "fights", "fighting",
+        "battle cry", "battle-cry", "war cry",
+        "draw my sword", "draw my weapon", "draw my bow",
+        "unsheathe", "ready my weapon",
+        "engage", "assail", "assaults",
+        "kill", "kills", "slay", "slays",
+        "ambush", "ambushed",
+    }
+
+    def _has_combat_keywords(self, text: str) -> bool:
+        lower = text.lower()
+        for kw in self._COMBAT_KEYWORDS:
+            if kw in lower:
+                return True
+        return False
+
     async def _check_combat_trigger(
         self,
         guild: discord.Guild,
@@ -39,7 +66,10 @@ class ActionsCog(commands.Cog):
         trigger_text: str,
     ):
         """
-        Ask the AI whether a player action or NPC response should start combat.
+        Decide whether a player action/NPC response should start combat.
+
+        Fast path: if the text contains obvious combat keywords, trigger immediately
+        without an AI call.  Slow path: ask the AI for ambiguous situations.
         Silently does nothing if no encounter is available or already in combat.
         """
         if not campaign:
@@ -66,8 +96,20 @@ class ActionsCog(commands.Cog):
         if flag and campaign.story_flags.get(flag):
             return
 
-        available = {enc_key: enc_data.get("description", "")}
+        game_cog = self.bot.get_cog("GameCog")
+        if not game_cog:
+            return
 
+        # --- Fast path: deterministic keyword check ---
+        if self._has_combat_keywords(trigger_text):
+            await game_cog._trigger_encounter(
+                guild, campaign, enc_key, enc_data,
+                "Player action indicates combat"
+            )
+            return
+
+        # --- Slow path: ask the AI for ambiguous situations ---
+        available = {enc_key: enc_data.get("description", "")}
         from ai.narrator import evaluate_combat_trigger
         try:
             start, chosen_key, reason = await evaluate_combat_trigger(
@@ -83,10 +125,8 @@ class ActionsCog(commands.Cog):
         if not start or not chosen_key:
             return
 
-        game_cog = self.bot.get_cog("GameCog")
-        if game_cog:
-            chosen_data = get_encounter(chosen_key) or enc_data
-            await game_cog._trigger_encounter(guild, campaign, chosen_key, chosen_data, reason)
+        chosen_data = get_encounter(chosen_key) or enc_data
+        await game_cog._trigger_encounter(guild, campaign, chosen_key, chosen_data, reason)
 
     async def _post_narration(self, guild, campaign, text: str, title: str = ""):
         if campaign and campaign.narration_channel_id:
