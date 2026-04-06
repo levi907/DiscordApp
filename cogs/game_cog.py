@@ -9,7 +9,7 @@ from typing import Optional
 
 import data.database as db
 from data.models import CampaignState, Quest
-from data.campaign.lmop import CHAPTERS, LOCATIONS, STARTING_QUESTS, get_encounter
+from data.campaign.lmop import CHAPTERS, LOCATIONS, STARTING_QUESTS, get_encounter, get_location_encounter_hint
 from ai.narrator import narrate_scene, narrate_encounter_start, generate_session_summary
 from utils.embeds import (
     narration_embed, campaign_status_embed, quest_embed, info_embed,
@@ -187,12 +187,16 @@ class GameCog(commands.Cog):
 
         # AI narration — non-fatal, falls back to static text if API unavailable
         location = LOCATIONS.get("sword_coast_road", {})
+        # Foreshadow the goblin ambush from the very first scene
+        _enc_data = get_encounter("goblin_ambush") or {}
         try:
             narration = await narrate_scene(
                 location_name=location.get("name", "Sword Coast Road"),
                 location_description=location.get("description", ""),
                 chapter=1,
                 recent_events=["The party has been hired by Gundren Rockseeker to escort supplies to Phandalin."],
+                foreshadow_name=_enc_data.get("name", ""),
+                foreshadow_hint=_enc_data.get("description", ""),
             )
         except Exception:
             narration = (
@@ -276,11 +280,14 @@ class GameCog(commands.Cog):
             "description": "The party stands in an unfamiliar place.",
         })
 
+        f_name, f_hint = get_location_encounter_hint(campaign)
         try:
             narration = await narrate_scene(
                 location_name=loc_data.get("name", campaign.current_location),
                 location_description=loc_data.get("description", ""),
                 chapter=campaign.chapter,
+                foreshadow_name=f_name,
+                foreshadow_hint=f_hint,
             )
         except Exception:
             narration = loc_data.get("description", "The party surveys their surroundings.")
@@ -316,11 +323,15 @@ class GameCog(commands.Cog):
             campaign.discovered_locations.append(campaign.current_location)
         await db.save_campaign(campaign)
 
+        # After saving the new location, the hint reflects the new destination
+        f_name, f_hint = get_location_encounter_hint(campaign)
         try:
             narration = await narrate_scene(
                 location_name=loc_data.get("name", location),
                 location_description=loc_data.get("description", ""),
                 chapter=campaign.chapter,
+                foreshadow_name=f_name,
+                foreshadow_hint=f_hint,
             )
         except Exception:
             narration = loc_data.get("description", f"The party arrives at {location}.")

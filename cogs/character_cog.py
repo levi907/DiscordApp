@@ -249,6 +249,8 @@ class CharacterCog(commands.Cog):
             # Optional AI character intro — non-fatal
             try:
                 from ai.narrator import narrate_scene
+                from data.campaign.lmop import get_encounter
+                _enc = get_encounter("goblin_ambush") or {}
                 intro = await narrate_scene(
                     location_name="Sword Coast Road",
                     location_description=(
@@ -257,6 +259,8 @@ class CharacterCog(commands.Cog):
                     ),
                     chapter=1,
                     recent_events=[f"{name} joins the party as a {race} {char_class}."],
+                    foreshadow_name=_enc.get("name", ""),
+                    foreshadow_hint=_enc.get("description", ""),
                 )
             except Exception:
                 intro = (

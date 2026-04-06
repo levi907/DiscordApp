@@ -10,7 +10,7 @@ from discord.ext import commands
 
 import data.database as db
 from data.models import Character
-from data.campaign.lmop import LOCATIONS, get_npc, NPCS
+from data.campaign.lmop import LOCATIONS, get_npc, NPCS, get_location_encounter_hint
 from engine.dice import roll_d20, roll_dice
 from engine.rules import SKILL_ABILITIES, CONDITIONS
 from ai.narrator import narrate_scene, narrate_npc_dialogue
@@ -111,11 +111,14 @@ class ActionsCog(commands.Cog):
             "description": "You survey your surroundings carefully.",
         })
 
+        f_name, f_hint = get_location_encounter_hint(campaign)
         try:
             narration = await narrate_scene(
                 location_name=loc.get("name", campaign.current_location),
                 location_description=loc.get("description", ""),
                 chapter=campaign.chapter,
+                foreshadow_name=f_name,
+                foreshadow_hint=f_hint,
             )
         except Exception:
             narration = loc.get("description", "You take in your surroundings.")

@@ -549,3 +549,23 @@ def get_npc(npc_key: str) -> dict | None:
 
 def get_class_archetype(char_class: str) -> dict | None:
     return CLASS_ARCHETYPES.get(char_class.lower())
+
+
+def get_location_encounter_hint(campaign) -> tuple[str, str]:
+    """
+    Returns (encounter_name, encounter_description) for the active upcoming
+    encounter at the campaign's current location, or ("", "") if none or
+    already completed. Used to pass foreshadowing context to the narrator.
+    """
+    loc_key = campaign.current_location.lower().replace(" ", "_")
+    loc_data = LOCATIONS.get(loc_key, {})
+    enc_key = loc_data.get("default_encounter")
+    if not enc_key:
+        return "", ""
+    enc_data = ENCOUNTERS.get(enc_key)
+    if not enc_data:
+        return "", ""
+    flag = enc_data.get("story_flag")
+    if flag and campaign.story_flags.get(flag):
+        return "", ""   # already completed — nothing to foreshadow
+    return enc_data.get("name", enc_key), enc_data.get("description", "")

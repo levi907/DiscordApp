@@ -33,20 +33,31 @@ Your style:
 - Never break character or mention game mechanics in narration.
 - Never summarize what players already know — describe the new moment.
 
+If a FORESHADOWING directive is included, you MUST weave subtle environmental clues
+toward that threat into your description (tracks, sounds, smells, unnatural silence,
+distant shapes, disturbed ground). Never name the threat directly or state that a fight
+is coming — hint only through atmosphere and sensory detail.
+
 Campaign context is provided in the user message. Use it to stay consistent.
 """
 
 COMBAT_NARRATOR_SYSTEM = """You are narrating D&D 5e combat using theater of the mind principles.
 
-Rules for combat narration:
-- 1-3 sentences per combat event. Be punchy and visceral.
-- Describe the physical action: "The goblin ducks under your swing and drives a blade at your ribs."
-- Include sensory details for hits: the sound of steel on bone, the flash of fire, the splatter of blood.
-- For misses: describe the near-miss or defensive action that saved the target.
-- For crits: amplify the drama — a devastating, decisive blow.
-- For kills: 1 vivid sentence of the creature's demise.
-- Never mention dice, HP numbers, or game stats in narration.
-- Keep initiative flow fast — don't over-describe.
+CRITICAL RULE — ACTION BEFORE OUTCOME:
+Every narration must describe the attacker's PHYSICAL ACTION first, then the result.
+Show the motion, effort, stance, and intent before revealing what happens to the target.
+  ✓ "Mira lunges forward, driving her blade in a tight arc at the goblin's exposed ribs — steel
+     grinds against bone and the creature staggers back with a shriek."
+  ✗ "Mira hits the goblin for 7 piercing damage."
+
+Additional rules:
+- 1-3 sentences per event. Punchy and visceral.
+- Include sensory details: sound of steel, flash of fire, splatter of blood, smell of char.
+- Misses: describe the near-miss or defensive action, not a blank whiff.
+- Crits: amplify the drama — a devastating, decisive blow with lasting imagery.
+- Kills: one vivid final sentence describing the creature's demise.
+- Never mention dice, HP numbers, or game statistics.
+- Keep the initiative flow fast — don't over-describe.
 """
 
 ACTION_PARSER_SYSTEM = """You are a D&D 5e rules assistant. Convert a player's natural language description
@@ -88,13 +99,28 @@ async def narrate_scene(
     location_description: str,
     chapter: int,
     recent_events: list[str] | None = None,
+    foreshadow_name: str = "",
+    foreshadow_hint: str = "",
 ) -> str:
-    """Generate a 2-4 sentence scene introduction."""
+    """
+    Generate a 2-4 sentence scene introduction.
+
+    If foreshadow_name/hint are provided, the AI will weave subtle environmental
+    clues toward the upcoming encounter into the description without naming it.
+    """
     context = f"Location: {location_name}\nDescription: {location_description}\nChapter: {chapter}"
     if recent_events:
         context += "\nRecent events: " + "; ".join(recent_events[-3:])
+    if foreshadow_name and foreshadow_hint:
+        context += (
+            f"\n\nFORESHADOWING — upcoming threat at this location: {foreshadow_name}.\n"
+            f"Context: {foreshadow_hint}\n"
+            "Embed 1-2 subtle sensory clues toward this danger in your description "
+            "(tracks, sounds, smells, shadows, unnatural silence, distant shapes). "
+            "Do NOT name the creature or state that a fight is coming."
+        )
 
-    prompt = f"""Describe this scene for the players as they arrive.\n\n{context}"""
+    prompt = f"Describe this scene for the players as they arrive.\n\n{context}"
 
     client = get_client()
     message = await client.messages.create(
@@ -146,7 +172,8 @@ async def narrate_combat_action(
         f"Action: {action_description}\n"
         f"Outcome: {mechanical_result}\n"
         f"{'Context: ' + context if context else ''}\n\n"
-        "Narrate this combat moment in 1-3 sentences."
+        "Narrate this combat moment in 1-3 sentences. "
+        "Lead with the attacker's physical motion and technique, then describe the result."
     )
 
     client = get_client()
