@@ -35,6 +35,12 @@ class DnDBot(commands.Bot):
         await db.init_db()
         log.info("Database initialized.")
 
+        # Register persistent views so buttons work after bot restarts
+        from utils.views import CombatView, ExplorationView
+        self.add_view(CombatView())
+        self.add_view(ExplorationView())
+        log.info("Persistent views registered.")
+
         for cog in COGS:
             try:
                 await self.load_extension(cog)

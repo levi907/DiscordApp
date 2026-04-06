@@ -74,6 +74,35 @@ class CombatCog(commands.Cog):
             current_name = m.name
         await ch.send(embed=combat_status_embed(status, combat.round_number, current_name))
 
+    async def _notify_current_player_with_view(
+        self, guild: discord.Guild, campaign, combat: CombatState
+    ):
+        """Send a CombatView button panel to whichever player's turn it currently is."""
+        from utils.views import CombatView
+
+        current_id = combat.current_combatant_id()
+        if not current_id or current_id not in combat.players:
+            return
+
+        ch_id = campaign.player_channel_ids.get(current_id) if campaign else None
+        if not ch_id:
+            return
+        ch = guild.get_channel(int(ch_id))
+        if not ch:
+            return
+
+        char = get_character_from_combat(combat, current_id)
+        is_unconscious = bool(char and char.current_hp <= 0)
+        turn = get_turn_tracking(combat, current_id)
+        actions_text = get_available_actions_text(char, turn) if char else ""
+        char_name = char.name if char else "Unknown"
+
+        view = CombatView(is_unconscious=is_unconscious)
+        await ch.send(
+            embed=info_embed("⚔️ Your Turn!", f"**{char_name}**, it's your turn!\n\n{actions_text}"),
+            view=view,
+        )
+
     async def _run_monster_turns(self, guild: discord.Guild, campaign, combat: CombatState):
         """Automatically process all consecutive monster turns."""
         guild_id = str(guild.id)
@@ -126,6 +155,8 @@ class CombatCog(commands.Cog):
 
         await db.save_combat(guild_id, combat)
         await self._post_combat_status(guild, campaign, combat)
+        # Notify the current player it's their turn and give them buttons
+        await self._notify_current_player_with_view(guild, campaign, combat)
 
     async def _end_combat(self, guild: discord.Guild, campaign, combat: CombatState, reason: str):
         """Handle combat end — victory or defeat."""
@@ -277,7 +308,7 @@ class CombatCog(commands.Cog):
         await db.append_log(guild_id, "combat",
             f"Encounter started: {encounter_data.get('name', encounter_name)}")
 
-        # Run monster turns if first
+        # Run monster turns if first, then notify current player with buttons
         await self._run_monster_turns(interaction.guild, campaign, combat)
 
         await interaction.followup.send(
@@ -844,6 +875,201 @@ class CombatCog(commands.Cog):
 
         # Run any consecutive monster turns
         await self._run_monster_turns(interaction.guild, campaign, combat)
+
+    # ------------------------------------------------------------------
+    # /combat_death_save
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # /combat_disengage
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="combat_disengage", description="Disengage — your movement won't provoke opportunity attacks this turn")
+    async def combat_disengage(self, interaction: discord.Interaction):
+        guild_id = str(interaction.guild_id)
+        discord_id = str(interaction.user.id)
+
+        combat = await db.load_combat(guild_id)
+        if not combat or not combat.is_active:
+            await interaction.response.send_message(embed=error_embed("No active combat."), ephemeral=True)
+            return
+
+        char = await db.load_character(discord_id, guild_id)
+        if not char:
+            await interaction.response.send_message(embed=error_embed("No character found."), ephemeral=True)
+            return
+
+        is_rogue = char.char_class.lower() == "rogue"
+        economy_type = "bonus_action" if is_rogue else "action"
+
+        try:
+            validate_it_is_your_turn(combat, discord_id)
+            turn = get_turn_tracking(combat, discord_id)
+            validate_action_available(turn, economy_type)
+        except ValidationError as e:
+            await interaction.response.send_message(embed=error_embed(str(e)), ephemeral=True)
+            return
+
+        consume_action(combat, discord_id, economy_type)
+        if "disengaging" not in char.conditions:
+            char.conditions.append("disengaging")
+        save_character_to_combat(combat, char)
+        await db.save_character(char, guild_id)
+        await db.save_combat(guild_id, combat)
+
+        label = "bonus action" if is_rogue else "action"
+        await interaction.response.send_message(
+            embed=success_embed(
+                f"**{char.name}** Disengages ({label}). "
+                "Movement this turn won't provoke opportunity attacks."
+            ),
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------
+    # /combat_hide
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="combat_hide", description="Hide — make a Stealth check to become hidden")
+    async def combat_hide(self, interaction: discord.Interaction):
+        guild_id = str(interaction.guild_id)
+        discord_id = str(interaction.user.id)
+
+        combat = await db.load_combat(guild_id)
+        if not combat or not combat.is_active:
+            await interaction.response.send_message(embed=error_embed("No active combat."), ephemeral=True)
+            return
+
+        char = await db.load_character(discord_id, guild_id)
+        if not char:
+            await interaction.response.send_message(embed=error_embed("No character found."), ephemeral=True)
+            return
+
+        is_rogue = char.char_class.lower() == "rogue"
+        economy_type = "bonus_action" if is_rogue else "action"
+
+        try:
+            validate_it_is_your_turn(combat, discord_id)
+            turn = get_turn_tracking(combat, discord_id)
+            validate_action_available(turn, economy_type)
+        except ValidationError as e:
+            await interaction.response.send_message(embed=error_embed(str(e)), ephemeral=True)
+            return
+
+        from engine.dice import roll_d20
+        stealth_roll = roll_d20() + char.ability_scores.dex_mod + char.proficiency_bonus
+        consume_action(combat, discord_id, economy_type)
+        combat.add_log(f"{char.name} hides (Stealth: {stealth_roll})")
+        await db.save_combat(guild_id, combat)
+
+        label = "bonus action" if is_rogue else "action"
+        await interaction.response.send_message(
+            embed=info_embed(
+                "🤫 Hide",
+                f"**{char.name}** attempts to Hide ({label}).\n**Stealth check: {stealth_roll}**\n"
+                "Enemies must beat this result to notice you.",
+            ),
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------
+    # /combat_help_action
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="combat_help_action", description="Help — give an ally advantage on their next attack or ability check")
+    @app_commands.describe(ally="Name of the ally to help (leave blank to help any ally)")
+    async def combat_help_action(self, interaction: discord.Interaction, ally: str = ""):
+        guild_id = str(interaction.guild_id)
+        discord_id = str(interaction.user.id)
+
+        combat = await db.load_combat(guild_id)
+        if not combat or not combat.is_active:
+            await interaction.response.send_message(embed=error_embed("No active combat."), ephemeral=True)
+            return
+
+        char = await db.load_character(discord_id, guild_id)
+        if not char:
+            await interaction.response.send_message(embed=error_embed("No character found."), ephemeral=True)
+            return
+
+        try:
+            validate_it_is_your_turn(combat, discord_id)
+            turn = get_turn_tracking(combat, discord_id)
+            validate_action_available(turn, "action")
+        except ValidationError as e:
+            await interaction.response.send_message(embed=error_embed(str(e)), ephemeral=True)
+            return
+
+        consume_action(combat, discord_id, "action")
+        ally_str = f"**{ally}**" if ally else "an ally"
+        result_text = f"{char.name} takes the Help action — {ally_str} has advantage on their next attack or ability check."
+        combat.add_log(result_text)
+        await db.save_combat(guild_id, combat)
+
+        await interaction.response.send_message(
+            embed=success_embed(f"🤝 {result_text}"),
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------
+    # /combat_use_potion
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="combat_use_potion", description="Use a healing potion from your inventory (restores 2d4+2 HP)")
+    async def combat_use_potion(self, interaction: discord.Interaction):
+        guild_id = str(interaction.guild_id)
+        discord_id = str(interaction.user.id)
+
+        combat = await db.load_combat(guild_id)
+        if not combat or not combat.is_active:
+            await interaction.response.send_message(embed=error_embed("No active combat."), ephemeral=True)
+            return
+
+        char = await db.load_character(discord_id, guild_id)
+        if not char:
+            await interaction.response.send_message(embed=error_embed("No character found."), ephemeral=True)
+            return
+
+        try:
+            validate_it_is_your_turn(combat, discord_id)
+            turn = get_turn_tracking(combat, discord_id)
+            validate_action_available(turn, "action")
+        except ValidationError as e:
+            await interaction.response.send_message(embed=error_embed(str(e)), ephemeral=True)
+            return
+
+        # Find a potion in inventory
+        potion = next(
+            (item for item in char.inventory if "potion" in item.name.lower()),
+            None,
+        )
+        if not potion:
+            await interaction.response.send_message(
+                embed=error_embed("You have no healing potions in your inventory."),
+                ephemeral=True,
+            )
+            return
+
+        # Remove one potion (reduce quantity or remove item)
+        if potion.quantity > 1:
+            potion.quantity -= 1
+        else:
+            char.inventory.remove(potion)
+
+        healed, _ = roll_dice("2d4+2")
+        char.heal(healed)
+        consume_action(combat, discord_id, "action")
+        save_character_to_combat(combat, char)
+        await db.save_character(char, guild_id)
+        await db.save_combat(guild_id, combat)
+
+        await interaction.response.send_message(
+            embed=success_embed(
+                f"🧪 **{char.name}** drinks a Healing Potion — restores **{healed} HP**! "
+                f"({char.current_hp}/{char.max_hp} HP)"
+            ),
+            ephemeral=True,
+        )
 
     # ------------------------------------------------------------------
     # /combat_death_save

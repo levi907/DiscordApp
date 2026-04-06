@@ -214,6 +214,7 @@ class GameCog(commands.Cog):
             await log_ch.send(embed=quest_embed(q))
 
         # Welcome message in each player's private channel
+        from utils.views import ExplorationView
         for member in player_members:
             ch_id = player_channel_ids.get(str(member.id))
             if ch_id:
@@ -226,8 +227,8 @@ class GameCog(commands.Cog):
                         f"```\n/character_create name:Thorin race:Dwarf char_class:Fighter\n```\n"
                         f"**Available classes:** Fighter, Wizard, Rogue, Cleric, Ranger, Paladin, Barbarian, Bard\n"
                         f"**Available races:** Human, Elf, Dwarf, Halfling, Half-Elf, Half-Orc, Gnome, Dragonborn, Tiefling\n\n"
-                        f"Type `/help` to see all commands."
-                    ))
+                        f"Use the buttons below or type `/help` to see all commands."
+                    ), view=ExplorationView())
 
         # Confirm in the invoking channel
         await interaction.followup.send(embed=success_embed(
@@ -413,6 +414,7 @@ class GameCog(commands.Cog):
             f"Auto-triggered encounter: {encounter_data.get('name', encounter_key)} — {reason}")
 
         # Notify each player
+        from utils.views import ExplorationView
         for pid in campaign.player_ids:
             ch_id = campaign.player_channel_ids.get(pid)
             if ch_id:
@@ -428,7 +430,7 @@ class GameCog(commands.Cog):
                             "⚔️ Combat! (Auto-triggered)",
                             f"*{reason}*\n\n"
                             + get_available_actions_text(char, turn)
-                            + "\n\nUse `/combat_action`, `/combat_attack`, `/combat_cast`, or `/combat_end_turn`."
+                            + "\n\nUse the buttons below or `/combat_action`, `/combat_attack`, `/combat_cast`, or `/combat_end_turn`."
                         ))
 
         # Run any immediate monster turns
